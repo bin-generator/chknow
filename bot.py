@@ -8,8 +8,11 @@ import logging
 from urllib.parse import urlencode
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+# --- PERUBAHAN 1: Import helper yang diperlukan ---
+from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 
-# --- KONFIGURASI DARI ENVIRONMENT VARIABLES (TANPA PROXY) ---
+# --- KONFIGURASI (SAMA SEPERTI SEBELUMNYA) ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 USER_COOKIE = os.getenv('USER_COOKIE')
 STRIPE_KEY = os.getenv('STRIPE_KEY')
@@ -20,6 +23,7 @@ if not all([TELEGRAM_BOT_TOKEN, USER_COOKIE, STRIPE_KEY]):
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- FUNGSI-FUNGSI BANTUAN (TIDAK ADA PERUBAHAN) ---
 def get_random_user():
     first_name = ''.join(random.choices(string.ascii_lowercase, k=7))
     last_name = ''.join(random.choices(string.ascii_lowercase, k=6))
@@ -61,9 +65,7 @@ def process_card(client: httpx.Client, cc, mm, yy, cvc):
     except httpx.HTTPStatusError as e: return {"status": "error", "message": f"HTTP Error: {e.response.status_code} - {e.response.text}"}
     except Exception as e: logger.error(f"Unexpected error in process_card: {e}"); return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
-# --- HANDLER UNTUK PERINTAH /start ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Mengirim pesan selamat datang saat perintah /start dijalankan."""
     welcome_text = """👋 Welcome to Secure Auth!
 
 Available Commands:
@@ -75,7 +77,7 @@ Bot by: Secure Auth Team"""
 
 async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message, user = update.message, update.message.from_user; card_info = " ".join(context.args)
-    if not card_info: await message.reply_text("❌ Format salah.\nContoh: `/au 434769...|01|29|422`", parse_mode='Markdown'); return
+    if not card_info: await message.reply_text("❌ Format salah.\nContoh: `/au 434769...|01|29|422`", parse_mode=ParseMode.MARKDOWN_V2); return
     sent_message = await message.reply_text("⏳ Checking...")
     try:
         parts = card_info.replace(' ', '|').replace('/', '|').split('|');
@@ -88,18 +90,39 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result['status'] == 'approved': status_text, result_text, code_text = "Approved! ✅", "Succeeded", result['code']
         elif result['status'] == 'decline': status_text, result_text, code_text = "Decline! ❌", result['code'], result['code']
         else: status_text, result_text, code_text = "Error! ⚠️", "Processing Error", result['message']
-        response_text = f"↬ Secure | Auth ↫\n- - - - - - - - - - - - - - - - - - - - -\n⇻ CC: `{cc_masked}|{mm}|{yy}|{cvc}`\n⇻ Status: {status_text}\n⇻ Result: {result_text}\n⇻ Code: `{code_text}`\n- - - - - - - - - - - - - - - - - - - - -\n⇻ Brand: `{bin_info['brand']}`\n⇻ Type: `{bin_info['type']}`\n⇻ Level: `{bin_info['level']}`\n⇻ Bank: `{bin_info['bank']}`\n⇻ Country: `{bin_info['country']}`\n- - - - - - - - - - - - - - - - - - - - -\n(↯) Checked by: @{user.username or user.first_name}"
-        await sent_message.edit_text(response_text, parse_mode='Markdown')
-    except Exception as e: logger.error(f"Error in au_command: {e}"); await sent_message.edit_text(f"Terjadi kesalahan internal. Error: {e}")
+        
+        # --- PERUBAHAN 2: Escape variabel sebelum dimasukkan ke pesan ---
+        # Menggunakan str() untuk memastikan tipe data adalah string
+        escaped_code = escape_markdown(str(code_text), version=2)
+        escaped_result = escape_markdown(str(result_text), version=2)
+
+        response_text = f"""
+↬ Secure | Auth ↫
+- - - - - - - - - - - - - - - - - - - - -
+⇻ CC: `{cc_masked}|{mm}|{yy}|{cvc}`
+⇻ Status: {status_text}
+⇻ Result: {escaped_result}
+⇻ Code: `{escaped_code}`
+- - - - - - - - - - - - - - - - - - - - -
+⇻ Brand: `{escape_markdown(bin_info['brand'], version=2)}`
+⇻ Type: `{escape_markdown(bin_info['type'], version=2)}`
+⇻ Level: `{escape_markdown(bin_info['level'], version=2)}`
+⇻ Bank: `{escape_markdown(bin_info['bank'], version=2)}`
+⇻ Country: `{escape_markdown(bin_info['country'], version=2)}`
+- - - - - - - - - - - - - - - - - - - - -
+(↯) Checked by: @{escape_markdown(user.username or user.first_name, version=2)}
+"""
+        # --- PERUBAHAN 3: Gunakan ParseMode.MARKDOWN_V2 yang lebih ketat ---
+        await sent_message.edit_text(response_text, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        logger.error(f"Error in au_command: {e}")
+        # Kirim pesan error tanpa format untuk menghindari error berulang
+        await sent_message.edit_text(f"Terjadi kesalahan internal. Error: {e}")
 
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
-    # --- PERUBAHAN UTAMA DI SINI ---
-    # Mendaftarkan handler untuk /start dan /au
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("au", au_command))
-    
     print("Bot berjalan...")
     application.run_polling()
 
