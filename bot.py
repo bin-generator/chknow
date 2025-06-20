@@ -90,38 +90,39 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif result['status'] == 'decline': status_text, result_text, code_text = "Decline! ❌", result['code'], result['code']
         else: status_text, result_text, code_text = "Error! ⚠️", "Processing Error", result['message']
         
-        # --- LOGIKA BARU YANG BENAR ---
-        # 1. Gabungkan string CC yang mentah terlebih dahulu.
-        full_cc_string = f"{cc_masked}|{mm}|{yy}|{cvc}"
-
-        # 2. Escape SEMUA variabel yang akan dimasukkan ke dalam pesan.
-        #    Menggunakan str() adalah praktik yang aman untuk memastikan tipe datanya benar.
-        escaped_cc = escape_markdown(full_cc_string, version=2)
-        escaped_result = escape_markdown(str(result_text), version=2)
-        escaped_code = escape_markdown(str(code_text), version=2)
-        escaped_brand = escape_markdown(str(bin_info['brand']), version=2)
-        escaped_type = escape_markdown(str(bin_info['type']), version=2)
-        escaped_level = escape_markdown(str(bin_info['level']), version=2)
-        escaped_bank = escape_markdown(str(bin_info['bank']), version=2)
-        escaped_country = escape_markdown(str(bin_info['country']), version=2)
-        escaped_user = escape_markdown(user.username or user.first_name, version=2)
+        # --- PERUBAHAN LOGIKA DI SINI ---
         
-        # 3. Buat pesan akhir menggunakan variabel yang sudah aman (escaped).
+        # Variabel yang akan masuk ke dalam blok `monospace` -> TIDAK DI-ESCAPE
+        raw_full_cc = f"{cc_masked}|{mm}|{yy}|{cvc}"
+        raw_code = str(code_text)
+        raw_brand = str(bin_info['brand'])
+        raw_type = str(bin_info['type'])
+        raw_level = str(bin_info['level'])
+        raw_bank = str(bin_info['bank'])
+        
+        # Variabel yang TIDAK masuk ke dalam blok `monospace` -> WAJIB DI-ESCAPE
+        escaped_result = escape_markdown(str(result_text), version=2)
+        escaped_country = escape_markdown(str(bin_info['country']), version=2) # Punya karakter [ dan ]
+        escaped_user = escape_markdown(user.username or user.first_name, version=2)
+
+        # Karakter khusus yang berdiri sendiri juga harus di-escape
+        escaped_arrow_bracket = r'\(↯\)' # Menggunakan raw string r'...' untuk menghindari masalah dengan backslash
+
         response_text = f"""
 ↬ Secure | Auth ↫
 - - - - - - - - - - - - - - - - - - - - -
-⇻ CC: `{escaped_cc}`
+⇻ CC: `{raw_full_cc}`
 ⇻ Status: {status_text}
 ⇻ Result: {escaped_result}
-⇻ Code: `{escaped_code}`
+⇻ Code: `{raw_code}`
 - - - - - - - - - - - - - - - - - - - - -
-⇻ Brand: `{escaped_brand}`
-⇻ Type: `{escaped_type}`
-⇻ Level: `{escaped_level}`
-⇻ Bank: `{escaped_bank}`
-⇻ Country: `{escaped_country}`
+⇻ Brand: `{raw_brand}`
+⇻ Type: `{raw_type}`
+⇻ Level: `{raw_level}`
+⇻ Bank: `{raw_bank}`
+⇻ Country: {escaped_country}
 - - - - - - - - - - - - - - - - - - - - -
-\(↯\) Checked by: @{escaped_user}
+{escaped_arrow_bracket} Checked by: @{escaped_user}
 """
         await sent_message.edit_text(response_text, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
