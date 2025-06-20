@@ -13,7 +13,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # Anda bisa ganti versi jika perlu
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -32,9 +32,8 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
         run: python bot.py & # Tanda '&' menjalankan skrip di background
 
-      # Langkah ini adalah "trik" untuk menjaga workflow tetap aktif.
-      # Tanpa ini, workflow akan berhenti setelah 'run: python bot.py' selesai.
+      # --- PERUBAHAN UTAMA ADA DI SINI ---
+      # Mengganti tmate-action dengan perintah sleep sederhana.
+      # Ini adalah cara yang lebih andal untuk menjaga workflow tetap aktif.
       - name: Keep workflow alive
-        uses: tmate-io/tmate-action@v1
-        with:
-          limit-access-to-actor: true
+        run: sleep infinity
