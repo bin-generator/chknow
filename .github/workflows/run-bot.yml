@@ -35,9 +35,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           
+      # !!! LANGKAH DIAGNOSTIK BARU - TAMBAHKAN INI !!!
+      - name: Check installed packages version
+        run: |
+          echo "--- Checking httpx version ---"
+          pip show httpx
+          echo "----------------------------"
+          
       # Langkah 4: Jalankan script bot Python
-      # Rahasia TELEGRAM_BOT_TOKEN akan dimasukkan sebagai environment variable
       - name: Run the bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python muse_bot.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python muse_bot.py
