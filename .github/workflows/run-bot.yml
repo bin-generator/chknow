@@ -1,47 +1,53 @@
-# Nama workflow yang akan muncul di tab Actions GitHub
 name: Run Telegram Bot
 
-# Pemicu (trigger) untuk menjalankan workflow ini
 on:
-  # 1. Jalankan saat ada push ke branch 'main'
   push:
     branches: [ "main" ]
-    
-  # 2. Izinkan untuk menjalankan workflow ini secara manual dari tab Actions
   workflow_dispatch:
 
 jobs:
   run-bot:
-    # Jalankan di lingkungan Ubuntu terbaru
     runs-on: ubuntu-latest
 
     steps:
-      # Langkah 1: Checkout kode dari repositori
-      # Ini akan mengunduh kode Anda ke runner
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Langkah 2: Setup lingkungan Python
-      # Menentukan versi Python yang akan digunakan
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Anda bisa ganti ke 3.9, 3.11, dll.
+          python-version: '3.10'
 
-            # Langkah 3: Install semua library yang dibutuhkan
-      - name: Install dependencies
+      # Langkah Paling Penting: Hapus semua cache yang mungkin ada
+      - name: Force clean pip cache
+        run: |
+          echo "Clearing pip cache..."
+          rm -rf ~/.cache/pip
+
+      - name: Install dependencies from scratch
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          
-      # !!! LANGKAH DIAGNOSTIK BARU - TAMBAHKAN INI !!!
-      - name: Check installed packages version
+          # Paksa install ulang tanpa cache
+          pip install --no-cache-dir -r requirements.txt
+
+      # ----------------------------------------------------
+      # BAGIAN DIAGNOSTIK PALING PENTING
+      # ----------------------------------------------------
+      - name: Verify Environment and Code
         run: |
-          echo "--- Checking httpx version ---"
+          echo "--- Verifying requirements.txt content ---"
+          cat requirements.txt
+          echo "------------------------------------------"
+          echo ""
+          echo "--- Verifying installed httpx version and location ---"
           pip show httpx
-          echo "----------------------------"
-          
-      # Langkah 4: Jalankan script bot Python
+          echo "------------------------------------------------------"
+          echo ""
+          echo "--- Verifying Python script content (first 50 lines) ---"
+          head -n 50 muse_bot.py
+          echo "--------------------------------------------------------"
+      # ----------------------------------------------------
+
       - name: Run the bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
