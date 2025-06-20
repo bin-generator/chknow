@@ -1,3 +1,4 @@
 python-telegram-bot
-httpx>=0.23.0
+aiohttp
+brotli
 faker
