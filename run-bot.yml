@@ -1,0 +1,40 @@
+name: Run Telegram Bot
+
+on:
+  workflow_dispatch: # Memungkinkan Anda menjalankan workflow ini secara manual
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Anda bisa ganti versi jika perlu
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run the bot in background
+        env:
+          # Secrets ini akan diambil dari pengaturan repositori Anda
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          USER_COOKIE: ${{ secrets.USER_COOKIE }}
+          STRIPE_KEY: ${{ secrets.STRIPE_KEY }}
+          PROXY_USER: ${{ secrets.PROXY_USER }}
+          PROXY_PASS: ${{ secrets.PROXY_PASS }}
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT }}
+        run: python bot.py & # Tanda '&' menjalankan skrip di background
+
+      # Langkah ini adalah "trik" untuk menjaga workflow tetap aktif.
+      # Tanpa ini, workflow akan berhenti setelah 'run: python bot.py' selesai.
+      - name: Keep workflow alive
+        uses: tmate-io/tmate-action@v1
+        with:
+          limit-access-to-actor: true
