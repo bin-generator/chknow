@@ -18,35 +18,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      # Langkah Paling Penting: Hapus semua cache yang mungkin ada
-      - name: Force clean pip cache
-        run: |
-          echo "Clearing pip cache..."
-          rm -rf ~/.cache/pip
-
-      - name: Install dependencies from scratch
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Paksa install ulang tanpa cache
-          pip install --no-cache-dir -r requirements.txt
-
-      # ----------------------------------------------------
-      # BAGIAN DIAGNOSTIK PALING PENTING
-      # ----------------------------------------------------
-      - name: Verify Environment and Code
-        run: |
-          echo "--- Verifying requirements.txt content ---"
-          cat requirements.txt
-          echo "------------------------------------------"
-          echo ""
-          echo "--- Verifying installed httpx version and location ---"
-          pip show httpx
-          echo "------------------------------------------------------"
-          echo ""
-          echo "--- Verifying Python script content (first 50 lines) ---"
-          head -n 50 muse_bot.py
-          echo "--------------------------------------------------------"
-      # ----------------------------------------------------
+          pip install -r requirements.txt
 
       - name: Run the bot
         env:
