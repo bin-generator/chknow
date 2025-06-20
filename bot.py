@@ -8,11 +8,10 @@ import logging
 from urllib.parse import urlencode
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-# --- PERUBAHAN 1: Import helper yang diperlukan ---
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
-# --- KONFIGURASI (SAMA SEPERTI SEBELUMNYA) ---
+# --- KONFIGURASI (TIDAK ADA PERUBAHAN) ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 USER_COOKIE = os.getenv('USER_COOKIE')
 STRIPE_KEY = os.getenv('STRIPE_KEY')
@@ -91,32 +90,42 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif result['status'] == 'decline': status_text, result_text, code_text = "Decline! ❌", result['code'], result['code']
         else: status_text, result_text, code_text = "Error! ⚠️", "Processing Error", result['message']
         
-        # --- PERUBAHAN 2: Escape variabel sebelum dimasukkan ke pesan ---
-        # Menggunakan str() untuk memastikan tipe data adalah string
-        escaped_code = escape_markdown(str(code_text), version=2)
-        escaped_result = escape_markdown(str(result_text), version=2)
+        # --- LOGIKA BARU YANG BENAR ---
+        # 1. Gabungkan string CC yang mentah terlebih dahulu.
+        full_cc_string = f"{cc_masked}|{mm}|{yy}|{cvc}"
 
+        # 2. Escape SEMUA variabel yang akan dimasukkan ke dalam pesan.
+        #    Menggunakan str() adalah praktik yang aman untuk memastikan tipe datanya benar.
+        escaped_cc = escape_markdown(full_cc_string, version=2)
+        escaped_result = escape_markdown(str(result_text), version=2)
+        escaped_code = escape_markdown(str(code_text), version=2)
+        escaped_brand = escape_markdown(str(bin_info['brand']), version=2)
+        escaped_type = escape_markdown(str(bin_info['type']), version=2)
+        escaped_level = escape_markdown(str(bin_info['level']), version=2)
+        escaped_bank = escape_markdown(str(bin_info['bank']), version=2)
+        escaped_country = escape_markdown(str(bin_info['country']), version=2)
+        escaped_user = escape_markdown(user.username or user.first_name, version=2)
+        
+        # 3. Buat pesan akhir menggunakan variabel yang sudah aman (escaped).
         response_text = f"""
 ↬ Secure | Auth ↫
 - - - - - - - - - - - - - - - - - - - - -
-⇻ CC: `{cc_masked}|{mm}|{yy}|{cvc}`
+⇻ CC: `{escaped_cc}`
 ⇻ Status: {status_text}
 ⇻ Result: {escaped_result}
 ⇻ Code: `{escaped_code}`
 - - - - - - - - - - - - - - - - - - - - -
-⇻ Brand: `{escape_markdown(bin_info['brand'], version=2)}`
-⇻ Type: `{escape_markdown(bin_info['type'], version=2)}`
-⇻ Level: `{escape_markdown(bin_info['level'], version=2)}`
-⇻ Bank: `{escape_markdown(bin_info['bank'], version=2)}`
-⇻ Country: `{escape_markdown(bin_info['country'], version=2)}`
+⇻ Brand: `{escaped_brand}`
+⇻ Type: `{escaped_type}`
+⇻ Level: `{escaped_level}`
+⇻ Bank: `{escaped_bank}`
+⇻ Country: `{escaped_country}`
 - - - - - - - - - - - - - - - - - - - - -
-(↯) Checked by: @{escape_markdown(user.username or user.first_name, version=2)}
+\(↯\) Checked by: @{escaped_user}
 """
-        # --- PERUBAHAN 3: Gunakan ParseMode.MARKDOWN_V2 yang lebih ketat ---
         await sent_message.edit_text(response_text, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         logger.error(f"Error in au_command: {e}")
-        # Kirim pesan error tanpa format untuk menghindari error berulang
         await sent_message.edit_text(f"Terjadi kesalahan internal. Error: {e}")
 
 def main():
